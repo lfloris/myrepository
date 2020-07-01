@@ -1,0 +1,106 @@
+apiVersion: tekton.dev/v1alpha1
+kind: Pipeline
+metadata:
+  name: appsody-build-pipeline
+spec:
+  resources:
+    - name: git-source
+      type: git
+    - name: docker-image
+      type: image
+  tasks:
+    - name: appsody-build
+      taskRef:
+        name: appsody-build-push-deploy-task
+      resources:
+        inputs:
+        - name: git-source
+          resource: git-source
+        - name: docker-image
+          resource: docker-image
+      params:
+      - name: app-deploy-file-name
+        value: app-deploy.yaml
+---
+apiVersion: tekton.dev/v1alpha1
+kind: Task
+metadata:
+  name: appsody-build-push-deploy-task
+spec:
+  inputs:
+    resources:
+      - name: git-source
+        type: git
+      - name: docker-image
+        type: image
+    params:
+      - name: app-deploy-file-name
+        default: app-deploy.yaml
+  steps:
+    - name: build
+      securityContext:
+        privileged: true
+      image: appsody/appsody-buildah:0.5.3-buildah1.9.0
+      command: ['/bin/bash']
+      args:
+        - -c
+        - "cd /workspace/$gitsource && appsody build -v     --buildah --buildah-options='--format=docker' -t $  (inputs.resources.docker-image.url) -f $(inputs.params.   app-deploy-file-name)"
+      env:
+        - name: gitsource
+          value: git-source
+      volumeMounts:
+        - mountPath: /var/lib/containers
+          name: varlibcontainers
+    - name: push
+      securityContext:
+        privileged: true
+      image: appsody/appsody-buildah:0.5.3-buildah1.9.0
+      command: ['buildah', 'push', '--tls-verify=false', '$ (inputs.resources.docker-image.url)', 'docker://$(inputs.    resources.docker-image.url)']
+      volumeMounts:
+         - mountPath: /var/lib/containers
+           name: varlibcontainers
+    - name: deploy-image
+      image: kabanero/kabanero-utils
+      command: ['/bin/sh']
+      args: ['-c', 'cd /workspace/$gitsource && kubectl apply   -f $(YAMLFILE)']
+      env:
+        - name: gitsource
+          value: git-source
+        - name: YAMLFILE
+          value: $(inputs.params.app-deploy-file-name)
+  volumes:
+    - name: varlibcontainers
+      emptyDir: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+    name: appsody-sa
+secrets:
+- name: default-dockercfg-9scx6
+imagePullSecrets:
+- name: default-dockercfg-9scx6
+---
+apiVersion: v1
+items:
+- apiVersion: tekton.dev/v1alpha1
+  kind: PipelineResource
+  metadata:
+    name: docker-image
+  spec:
+    params:
+    - name: url
+      value: image-registry.openshift-image-registry.svc:5000/appsody-demo/nodejs-ex-1
+    type: image
+- apiVersion: tekton.dev/v1alpha1
+  kind: PipelineResource
+  metadata:
+    name: git-source
+  spec:
+    params:
+    - name: revision
+      value: master
+    - name: url
+      value: https://github.com/lfloris/myrepository.git
+    type: git
+kind: List
